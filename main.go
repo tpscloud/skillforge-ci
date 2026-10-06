@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/signal"
 	"runtime/debug"
@@ -86,7 +87,17 @@ func newRoot(out, diagnostic io.Writer) *cobra.Command {
 		return nil
 	}}
 	install.Flags().BoolVar(&update, "update", false, "Replace recognized managed files; preserve repository configuration")
-	root.AddCommand(validate, checks, scan, install)
+	var forks forkSyncOptions
+	forkSync := &cobra.Command{Use: "fork-sync [directory]", Short: "Fast-forward declared forks to their upstream branch and report the result", Long: "Reads .skill-forks.json from the directory, fast-forwards each declared fork to its upstream branch, and reports every fork that is behind, diverged, missing, or not writable.\n\nThe fork token is read from SKILLFORGE_FORK_TOKEN and an optional webhook URL from SKILLFORGE_NOTIFY_WEBHOOK. A Markdown summary is appended to the file named by GITHUB_STEP_SUMMARY when that variable is set.", Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		forks.Directory = repository(args)
+		forks.Token, forks.Webhook, forks.SummaryPath = os.Getenv(forkTokenEnv), os.Getenv(notifyWebhookEnv), os.Getenv("GITHUB_STEP_SUMMARY")
+		forks.Client = &http.Client{}
+		return runForkSync(cmd.Context(), forks, cmd.OutOrStdout())
+	}}
+	forkSync.Flags().StringVar(&forks.Output, "output", "", "Write the JSON report to this file")
+	forkSync.Flags().BoolVar(&forks.CheckOnly, "check", false, "Compare forks with upstream without pushing")
+	forkSync.Flags().StringVar(&forks.GitBase, "git-base", "https://github.com", "Base URL or directory that holds owner/repository.git")
+	root.AddCommand(validate, checks, scan, install, forkSync)
 	return root
 }
 
