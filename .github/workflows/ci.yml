@@ -1,0 +1,47 @@
+# Copyright 2026 coversheets. SPDX-License-Identifier: MIT
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@90ad2b35f69faf97585ad74d28fa006d2739b7af
+        with:
+          go-version-file: go.mod
+      - run: go mod verify
+      - run: go vet ./...
+      - run: go test -race ./...
+      - run: go build -mod=readonly -trimpath -o "$RUNNER_TEMP/skillforge" .
+      - name: Check clean and seeded scanner fixtures
+        run: bash scripts/test-scanner.sh "$RUNNER_TEMP/skillforge"
+      - name: Scan repository history and current files
+        if: ${{ !cancelled() }}
+        run: '"$RUNNER_TEMP/skillforge" scan . --output-directory "$RUNNER_TEMP/repository-scan"'
+      - name: Save scan summary
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: scan-${{ matrix.os }}-${{ github.sha }}
+          path: ${{ runner.temp }}/repository-scan/summary.json
+          if-no-files-found: error
+          retention-days: 30
