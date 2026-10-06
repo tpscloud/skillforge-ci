@@ -1,6 +1,6 @@
 # License and dependencies
 
-Skillforge CI is Copyright 2026 coversheets, licensed under MIT. This includes
+Skillforge CI is Copyright 2026 John Deatherage (@coversheets), licensed under MIT. This includes
 the Go implementation, tests, workflow templates, and authored documentation.
 The installed bundle carries this notice and the full license.
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright 2026 coversheets. SPDX-License-Identifier: MIT
+# Copyright 2026 John Deatherage (@coversheets). SPDX-License-Identifier: MIT
 set -euo pipefail
 binary="$1"
 fixture_dir="$(mktemp -d)"

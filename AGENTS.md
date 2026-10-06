@@ -22,3 +22,6 @@ their integration.
 
 Apply humanizer and avoid-ai-writing to authored documentation while preserving
 code, commands, links, source notices, and uncertainty.
+
+Use `John Deatherage (@coversheets)` in authored copyright notices. Preserve
+upstream copyright holders and license texts.

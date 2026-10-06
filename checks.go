@@ -1,4 +1,4 @@
-// Copyright 2026 coversheets. SPDX-License-Identifier: MIT
+// Copyright 2026 John Deatherage (@coversheets). SPDX-License-Identifier: MIT
 package main
 
 import (
