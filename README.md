@@ -6,7 +6,7 @@ and current files for secrets. It can also fast-forward declared forks to their
 upstream branch and report the result. The toolkit uses Go and Bash, with no Python
 runtime dependency.
 
-This repository is private. Existing one-skill consumers have not been migrated.
+This repository is private. The owner's skill repositories build from bundles installed by this toolkit.
 
 ## Build and use
 
@@ -82,7 +82,7 @@ Repository-specific tests keep their existing commands and dependencies. Before
 migrating a consumer, add any required test-language setup to a separate
 repository workflow or provide it through the declared checks. The supplied
 workflow installs only Go; it does not provision Python or Node for consumer
-tests. Migration of the existing skill repositories is deferred.
+tests.
 
 ## Sync forks
 
