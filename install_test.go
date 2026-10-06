@@ -159,3 +159,37 @@ func TestInstallDiscoversSkills(t *testing.T) {
 		t.Fatalf("%+v %v", c, err)
 	}
 }
+
+func TestRebuiltConsumerRetainsOriginAndDetectsEdits(t *testing.T) {
+	root := fixture(t)
+	if err := installBundle(t.Context(), root, false); err != nil {
+		t.Fatal(err)
+	}
+	toolkit := filepath.Join(root, ".skill-quality")
+	// Represent a copy from a clean producer, then edit its source before building.
+	if err := writeJSON(filepath.Join(toolkit, "source.json"), sourceProvenance{Revision: "producer-revision", Dirty: false, ContentHash: bundleHash()}); err != nil {
+		t.Fatal(err)
+	}
+	writeFixture(t, toolkit, "NOTICE.md", "Modified local notice.\n")
+	binary := filepath.Join(t.TempDir(), "skillforge")
+	build := exec.CommandContext(t.Context(), "go", "build", "-mod=readonly", "-o", binary, ".")
+	build.Dir = toolkit
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("%s: %v", out, err)
+	}
+	target := fixture(t)
+	if out, err := exec.CommandContext(t.Context(), binary, "install", target).CombinedOutput(); err != nil {
+		t.Fatalf("%s: %v", out, err)
+	}
+	var m manifest
+	b, err := os.ReadFile(filepath.Join(target, ".skill-quality/bundle.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatal(err)
+	}
+	if m.Revision != "producer-revision" || !m.Dirty || m.ContentHash == bundleHash() {
+		t.Fatalf("modified consumer provenance: %+v", m)
+	}
+}

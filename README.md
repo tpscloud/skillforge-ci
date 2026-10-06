@@ -61,7 +61,8 @@ tests, and provenance into `.skill-quality/`, and adds the GitHub Actions
 workflow `.github/workflows/skill-quality.yml`. Consumers build from that copy
 without access to this private repository. The manifest records the producer
 revision and dirty state, content hash, and individual file digests. Copies
-retain the producer provenance when built and installed elsewhere.
+retain the producer provenance when built and installed elsewhere. Edits to
+the copied sources mark that provenance dirty on the next installation.
 
 Existing `.skill-quality.json` files are preserved. When that file is absent,
 the installer inventories tracked and unignored `SKILL.md` files and creates

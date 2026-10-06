@@ -61,19 +61,24 @@ func bundleHash() string {
 }
 
 type sourceProvenance struct {
-	Revision string `json:"revision"`
-	Dirty    bool   `json:"dirty"`
+	Revision    string `json:"revision"`
+	Dirty       bool   `json:"dirty"`
+	ContentHash string `json:"contentHash"`
 }
 
 func producerSource() sourceProvenance {
 	b, _ := bundle.ReadFile("source.json")
 	var source sourceProvenance
 	_ = json.Unmarshal(b, &source)
-	if source.Revision != "" && source.Revision != "unrecorded" {
+	currentHash := bundleHash()
+	if source.ContentHash != "" {
+		source.Dirty = source.Dirty || source.ContentHash != currentHash
+		source.ContentHash = currentHash
 		return source
 	}
 	source.Revision = buildRevision()
 	source.Dirty = buildDirty()
+	source.ContentHash = currentHash
 	return source
 }
 
@@ -99,7 +104,7 @@ func noSymlinks(root, relative string) error {
 }
 
 func checkExisting(root string, update bool) error {
-	for _, relative := range []string{".skill-quality", ".github/workflows/skill-quality.yml", ".skill-quality.json"} {
+	for _, relative := range []string{".skill-quality", ".skill-quality/bundle.json", ".github/workflows/skill-quality.yml", ".skill-quality.json"} {
 		if err := noSymlinks(root, relative); err != nil {
 			return err
 		}
