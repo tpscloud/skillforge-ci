@@ -267,3 +267,73 @@ func TestExitCodes(t *testing.T) {
 		t.Fatal("exit code contract")
 	}
 }
+
+func TestUnknownConfigurationKeysFailClosed(t *testing.T) {
+	for _, raw := range []string{
+		`{"skills":["SKILL.md"],"chekcs":[{"name":"test","command":["false"]}]}`,
+		`{"skills":["SKILL.md"],"Checks":[]}`,
+		`{"skills":["SKILL.md"],"checks":[{"name":"test","command":["true"],"cdw":"elsewhere"}]}`,
+	} {
+		root := fixture(t)
+		writeFixture(t, root, ".skill-quality.json", raw)
+		if r := validateRepository(t.Context(), root); r.Status != "fail" || !hasFinding(r, "configuration") {
+			t.Fatalf("accepted unknown key: %+v", r)
+		}
+		if err := runChecks(t.Context(), root, &bytes.Buffer{}, &bytes.Buffer{}); err == nil {
+			t.Fatal("check accepted unknown key")
+		}
+	}
+}
+
+func TestContentHashRecords(t *testing.T) {
+	for _, kind := range []string{"missing", "boundaries", "mode", "symlink"} {
+		t.Run(kind, func(t *testing.T) {
+			root := fixture(t)
+			beforeContent := "missing"
+			if kind == "boundaries" {
+				beforeContent = "left\x00b\x00right"
+			}
+			if kind == "symlink" {
+				beforeContent = "symlink\x00guide.md"
+			}
+			writeFixture(t, root, "a", beforeContent)
+			if _, err := git(t.Context(), root, "add", "a"); err != nil {
+				t.Fatal(err)
+			}
+			before, err := contentHash(t.Context(), root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch kind {
+			case "missing":
+				if err := os.Remove(filepath.Join(root, "a")); err != nil {
+					t.Fatal(err)
+				}
+			case "boundaries":
+				writeFixture(t, root, "a", "left")
+				writeFixture(t, root, "b", "right")
+			case "mode":
+				if err := os.Chmod(filepath.Join(root, "a"), 0755); err != nil {
+					t.Fatal(err)
+				}
+			case "symlink":
+				if err := os.Remove(filepath.Join(root, "a")); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink("guide.md", filepath.Join(root, "a")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			after, err := contentHash(t.Context(), root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if before == after {
+				t.Fatal("different content hashed identically")
+			}
+			if r := validateRepository(t.Context(), root); r.ContentHashVersion != 2 {
+				t.Fatal("hash version absent")
+			}
+		})
+	}
+}

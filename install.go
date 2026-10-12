@@ -129,17 +129,21 @@ func checkExisting(root string, update bool) error {
 		return fmt.Errorf("unrecognized bundle; refusing replacement")
 	}
 	expected := map[string]bool{"bundle.json": true}
+	expectedDirs := map[string]bool{".": true}
 	workflowFound := false
 	for _, f := range old.Files {
+		if !filepath.IsLocal(f.Path) {
+			return fmt.Errorf("unsafe manifest path: %s", f.Path)
+		}
 		relative := filepath.Join(".skill-quality", f.Path)
 		if f.Path == ".github/workflows/skill-quality.yml" {
 			relative = f.Path
 			workflowFound = true
 		} else {
 			expected[f.Path] = true
-		}
-		if !filepath.IsLocal(f.Path) {
-			return fmt.Errorf("unsafe manifest path: %s", f.Path)
+			for dir := filepath.Dir(f.Path); dir != "."; dir = filepath.Dir(dir) {
+				expectedDirs[filepath.ToSlash(dir)] = true
+			}
 		}
 		if err := noSymlinks(root, relative); err != nil {
 			return err
@@ -159,12 +163,15 @@ func checkExisting(root string, update bool) error {
 		if err != nil {
 			return err
 		}
-		if entry.IsDir() {
-			return nil
-		}
 		relative, err := filepath.Rel(filepath.Join(root, ".skill-quality"), path)
 		if err != nil {
 			return err
+		}
+		if entry.IsDir() {
+			if !expectedDirs[filepath.ToSlash(relative)] {
+				return fmt.Errorf("unmanaged directory in bundle: %s", relative)
+			}
+			return nil
 		}
 		if !expected[filepath.ToSlash(relative)] {
 			return fmt.Errorf("unmanaged file in bundle: %s", relative)

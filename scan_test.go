@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -165,5 +166,32 @@ func TestScannerRefusesTargetIgnore(t *testing.T) {
 				t.Fatalf("target was changed: %v", err)
 			}
 		})
+	}
+}
+
+func TestShallowScanFailsWithEvidence(t *testing.T) {
+	root := fixture(t)
+	if _, err := git(t.Context(), root, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "fixture"); err != nil {
+		t.Fatal(err)
+	}
+	head, err := git(t.Context(), root, "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFixture(t, root, ".git/shallow", string(head))
+	output := filepath.Join(t.TempDir(), "scan")
+	if err := scanRepository(t.Context(), root, output, io.Discard, io.Discard); exitCode(err) != 2 {
+		t.Fatalf("shallow scan: %v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(output, "summary.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var report scanReport
+	if err := json.Unmarshal(raw, &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.Status != "error" || len(report.Modes) != 0 {
+		t.Fatalf("misleading evidence: %+v", report)
 	}
 }

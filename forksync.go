@@ -77,6 +77,7 @@ type forkReport struct {
 type forkSyncOptions struct {
 	Directory, GitBase, Output, Token, Webhook, SummaryPath string
 	CheckOnly                                               bool
+	Timeout                                                 time.Duration
 	Client                                                  *http.Client
 }
 
@@ -143,10 +144,14 @@ func forkGitEnv(base, token string) []string {
 func forkGit(ctx context.Context, env []string, token, directory string, args ...string) (string, string, error) {
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", directory}, args...)...)
 	cmd.Env = env
+	configureProcessGroup(cmd)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	err := cmd.Run()
 	detail := strings.Join(strings.Fields(stderr.String()), " ")
+	if err != nil && ctx.Err() != nil {
+		detail = ctx.Err().Error()
+	}
 	if token != "" {
 		detail = strings.ReplaceAll(detail, token, "[redacted]")
 		detail = strings.ReplaceAll(detail, base64.StdEncoding.EncodeToString([]byte("x-access-token:"+token)), "[redacted]")
@@ -186,6 +191,12 @@ func remoteURL(base, name string) string {
 }
 
 func syncFork(ctx context.Context, e forkEntry, o forkSyncOptions) (r forkResult) {
+	timeout := o.Timeout
+	if timeout <= 0 {
+		timeout = 10 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 	r = forkResult{Fork: e.Fork, Upstream: e.Upstream, Branch: e.Branch, Status: "failed"}
 	work, err := os.MkdirTemp("", "skillforge-fork-")
 	if err != nil {
@@ -363,16 +374,17 @@ func postWebhook(ctx context.Context, client *http.Client, target string, report
 		return errors.New("the webhook request could not be built")
 	}
 	request.Header.Set("Content-Type", "application/json")
-	response, err := client.Do(request)
+	// Redirects can disclose the credential-bearing URL in nested client errors.
+	// Treat every redirect as a delivery failure and never return transport text.
+	safeClient := *client
+	safeClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	response, err := safeClient.Do(request)
 	if err != nil {
-		if wrapped, ok := errors.AsType[*url.Error](err); ok {
-			err = wrapped.Err
-		}
-		return fmt.Errorf("webhook delivery failed: %w", err)
+		return errors.New("webhook delivery failed (connection, TLS, timeout, or redirect error)")
 	}
 	defer response.Body.Close()
 	if _, err := io.Copy(io.Discard, io.LimitReader(response.Body, 1<<16)); err != nil {
-		return fmt.Errorf("webhook delivery failed: %w", err)
+		return errors.New("webhook response could not be read")
 	}
 	if response.StatusCode < 200 || response.StatusCode > 299 {
 		return fmt.Errorf("webhook returned HTTP %d", response.StatusCode)

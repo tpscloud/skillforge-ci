@@ -16,10 +16,14 @@ import (
 func execute(ctx context.Context, cwd string, argv []string, out, diagnostic io.Writer) error {
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Dir, cmd.Stdout, cmd.Stderr = cwd, out, diagnostic
+	configureProcessGroup(cmd)
+	return cmd.Run()
+}
+
+func configureProcessGroup(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	cmd.WaitDelay = 2 * time.Second
-	return cmd.Run()
 }
 
 func runChecks(ctx context.Context, path string, out, diagnostic io.Writer) error {

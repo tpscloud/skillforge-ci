@@ -206,6 +206,13 @@ func scanRepository(ctx context.Context, path, output string, out, diagnostic io
 		report.Revision = string(bytes.TrimSpace(revision))
 	}
 	defer func() { resultErr = errors.Join(resultErr, writeJSON(filepath.Join(output, "summary.json"), report)) }()
+	shallow, err := git(ctx, root, "rev-parse", "--is-shallow-repository")
+	if err != nil {
+		return err
+	}
+	if string(bytes.TrimSpace(shallow)) != "false" {
+		return fmt.Errorf("history scan requires a complete clone; fetch full history before scanning")
+	}
 	b, err := downloadScanner(ctx)
 	if err != nil {
 		return err

@@ -37,17 +37,18 @@ type skill struct {
 	SHA256 string `json:"sha256"`
 }
 type report struct {
-	Version       int       `json:"version"`
-	CheckedAt     string    `json:"checkedAt"`
-	Revision      *string   `json:"revision"`
-	ContentHash   string    `json:"contentHash"`
-	ValidatorHash string    `json:"validatorHash"`
-	Dirty         bool      `json:"dirty"`
-	Status        string    `json:"status"`
-	Scope         string    `json:"scope"`
-	Skills        []skill   `json:"skills"`
-	Findings      []finding `json:"findings"`
-	NotAssessed   []string  `json:"notAssessed"`
+	Version            int       `json:"version"`
+	CheckedAt          string    `json:"checkedAt"`
+	Revision           *string   `json:"revision"`
+	ContentHash        string    `json:"contentHash"`
+	ContentHashVersion int       `json:"contentHashVersion"`
+	ValidatorHash      string    `json:"validatorHash"`
+	Dirty              bool      `json:"dirty"`
+	Status             string    `json:"status"`
+	Scope              string    `json:"scope"`
+	Skills             []skill   `json:"skills"`
+	Findings           []finding `json:"findings"`
+	NotAssessed        []string  `json:"notAssessed"`
 }
 
 func (r *report) issue(code, path, message string, warning bool) {
@@ -102,7 +103,7 @@ func frontmatter(raw []byte, policy frontmatterPolicy) (string, []byte, error) {
 }
 
 func validateRepository(ctx context.Context, path string) report {
-	r := report{Version: 1, CheckedAt: time.Now().UTC().Format(time.RFC3339), Status: "pass", Dirty: true,
+	r := report{Version: 1, ContentHashVersion: 2, CheckedAt: time.Now().UTC().Format(time.RFC3339), Status: "pass", Dirty: true,
 		Scope: "declared entrypoints, page config, tracked file hygiene", Skills: []skill{}, Findings: []finding{},
 		ValidatorHash: bundleHash(), NotAssessed: []string{"semantic security", "behavioral quality", "provider audits", "redistribution rights", "installer compatibility"}}
 	root, err := repositoryRoot(ctx, path)
@@ -299,6 +300,9 @@ func contentHash(ctx context.Context, root string) (string, error) {
 	slices.Sort(paths)
 	paths = slices.Compact(paths)
 	h := sha256.New()
+	encoder := json.NewEncoder(h)
+	// JSON records frame arbitrary path/content bytes without delimiter collisions.
+	// A fixed digest represents regular file content; type and execute bits are separate.
 	for _, relative := range paths {
 		if relative == "" {
 			continue
@@ -306,12 +310,17 @@ func contentHash(ctx context.Context, root string) (string, error) {
 		if err := ctx.Err(); err != nil {
 			return "", err
 		}
-		io.WriteString(h, relative+"\x00")
+		record := struct {
+			Path       []byte
+			Kind       string
+			Executable bool
+			Content    []byte
+		}{Path: []byte(relative)}
 		path := filepath.Join(root, relative)
 		info, err := os.Lstat(path)
 		switch {
 		case os.IsNotExist(err):
-			io.WriteString(h, "missing")
+			record.Kind = "missing"
 		case err != nil:
 			return "", err
 		case info.Mode()&os.ModeSymlink != 0:
@@ -319,7 +328,7 @@ func contentHash(ctx context.Context, root string) (string, error) {
 			if err != nil {
 				return "", err
 			}
-			io.WriteString(h, "symlink\x00"+target)
+			record.Kind, record.Content = "symlink", []byte(target)
 		case info.Mode().IsRegular():
 			if !contained(root, path) {
 				return "", fmt.Errorf("cannot hash file outside repository: %s", relative)
@@ -328,7 +337,8 @@ func contentHash(ctx context.Context, root string) (string, error) {
 			if err != nil {
 				return "", err
 			}
-			_, err = io.Copy(h, f)
+			fileHash := sha256.New()
+			_, err = io.Copy(fileHash, f)
 			closeErr := f.Close()
 			if err != nil {
 				return "", err
@@ -336,10 +346,14 @@ func contentHash(ctx context.Context, root string) (string, error) {
 			if closeErr != nil {
 				return "", closeErr
 			}
+			record.Kind, record.Content = "file", fileHash.Sum(nil)
+			record.Executable = info.Mode().Perm()&0111 != 0
 		default:
-			io.WriteString(h, "missing")
+			return "", fmt.Errorf("unsupported tracked or unignored file type: %s", relative)
 		}
-		io.WriteString(h, "\x00")
+		if err := encoder.Encode(record); err != nil {
+			return "", err
+		}
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
 }

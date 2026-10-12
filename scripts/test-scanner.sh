@@ -62,3 +62,14 @@ if [[ "$result" -ne 1 ]]; then
   exit 1
 fi
 echo 'Clean, current-file, suppression, and deleted-history scanner checks passed.'
+git clone -q --depth 1 "file://$fixture_dir/repo" "$fixture_dir/shallow"
+set +e
+"$binary" scan "$fixture_dir/shallow" --output-directory "$fixture_dir/shallow-scan"
+result=$?
+set -e
+if [[ "$result" -ne 2 ]]; then
+  echo "Expected an incomplete-history error, got $result" >&2
+  exit 1
+fi
+test -s "$fixture_dir/shallow-scan/summary.json"
+echo 'Shallow history correctly rejected with evidence.'

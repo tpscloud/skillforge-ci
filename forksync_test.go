@@ -3,6 +3,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -15,6 +16,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // forkFixture holds local bare repositories laid out as base/owner/name.git,
@@ -321,5 +323,55 @@ func TestForkSyncCommand(t *testing.T) {
 	}
 	if b, err := os.ReadFile(summary); err != nil || !strings.Contains(string(b), "## Fork sync: pass") {
 		t.Fatalf("summary: %v %s", err, b)
+	}
+}
+
+func TestWebhookErrorsNeverDiscloseURLs(t *testing.T) {
+	for _, location := range []string{"http://invalid:port", "http://unreachable.invalid"} {
+		t.Run(location, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Location", location+r.URL.RequestURI())
+				w.WriteHeader(http.StatusTemporaryRedirect)
+			}))
+			defer server.Close()
+			err := postWebhook(t.Context(), server.Client(), server.URL+"/synthetic-credential", forkReport{})
+			if err == nil || strings.Contains(err.Error(), "synthetic-credential") || strings.Contains(err.Error(), server.URL) || strings.Contains(err.Error(), location) {
+				t.Fatalf("unsafe webhook error: %v", err)
+			}
+		})
+	}
+}
+
+func TestForkTimeoutContinuesAndWritesReport(t *testing.T) {
+	f := newForkFixture(t)
+	gitPath, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	// Only the first fork stalls. The child retains pipes until group cancellation.
+	script := "#!/bin/sh\ncase \"$*\" in *me/stalled.git*) sleep 30 & wait; exit 1;; esac\nexec \"$SKILLFORGE_TEST_GIT\" \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SKILLFORGE_TEST_GIT", gitPath)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	f.configure(`{"version":1,"forks":[{"fork":"me/stalled","upstream":"up/proj","branch":"main"},{"fork":"me/proj","upstream":"up/proj","branch":"main"}]}`)
+	start := time.Now()
+	report, err := f.sync(func(o *forkSyncOptions) { o.Timeout = time.Second })
+	if exitCode(err) != 2 || len(report.Forks) != 2 || report.Forks[0].Status != "failed" || report.Forks[1].Status != "current" || !strings.Contains(report.Forks[0].Message, "deadline exceeded") {
+		t.Fatalf("timeout: %v %+v", err, report)
+	}
+	if time.Since(start) > 5*time.Second {
+		t.Fatal("child process delayed cancellation")
+	}
+}
+
+func TestForkGitCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, _, err := forkGit(ctx, os.Environ(), "", t.TempDir(), "status")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled git: %v", err)
 	}
 }

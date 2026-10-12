@@ -11,9 +11,13 @@ import (
 	"os/signal"
 	"runtime/debug"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 )
+
+// Release builds set version; ordinary builds remain visibly development builds.
+var version = "dev"
 
 var errFindings = errors.New("checks found problems")
 
@@ -40,7 +44,7 @@ func buildDirty() bool {
 }
 
 func newRoot(out, diagnostic io.Writer) *cobra.Command {
-	root := &cobra.Command{Use: "skillforge", Short: "Validate skill repositories and run local CI checks", Version: "0.1.0", SilenceUsage: true, SilenceErrors: true}
+	root := &cobra.Command{Use: "skillforge", Short: "Validate skill repositories and run local CI checks", Version: fmt.Sprintf("%s (revision %s, dirty %t)", version, buildRevision(), buildDirty()), SilenceUsage: true, SilenceErrors: true}
 	root.SetOut(out)
 	root.SetErr(diagnostic)
 	repository := func(args []string) string {
@@ -89,12 +93,16 @@ func newRoot(out, diagnostic io.Writer) *cobra.Command {
 	install.Flags().BoolVar(&update, "update", false, "Replace recognized managed files; preserve repository configuration")
 	var forks forkSyncOptions
 	forkSync := &cobra.Command{Use: "fork-sync [directory]", Short: "Fast-forward declared forks to their upstream branch and report the result", Long: "Reads .skill-forks.json from the directory, fast-forwards each declared fork to its upstream branch, and reports every fork that is behind, diverged, missing, or not writable.\n\nThe fork token is read from SKILLFORGE_FORK_TOKEN and an optional webhook URL from SKILLFORGE_NOTIFY_WEBHOOK. A Markdown summary is appended to the file named by GITHUB_STEP_SUMMARY when that variable is set.", Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		if forks.Timeout <= 0 {
+			return fmt.Errorf("timeout must be positive")
+		}
 		forks.Directory = repository(args)
 		forks.Token, forks.Webhook, forks.SummaryPath = os.Getenv(forkTokenEnv), os.Getenv(notifyWebhookEnv), os.Getenv("GITHUB_STEP_SUMMARY")
 		forks.Client = &http.Client{}
 		return runForkSync(cmd.Context(), forks, cmd.OutOrStdout())
 	}}
 	forkSync.Flags().StringVar(&forks.Output, "output", "", "Write the JSON report to this file")
+	forkSync.Flags().DurationVar(&forks.Timeout, "timeout", 10*time.Minute, "Maximum duration for each fork, including all Git operations")
 	forkSync.Flags().BoolVar(&forks.CheckOnly, "check", false, "Compare forks with upstream without pushing")
 	forkSync.Flags().StringVar(&forks.GitBase, "git-base", "https://github.com", "Base URL or directory that holds owner/repository.git")
 	root.AddCommand(validate, checks, scan, install, forkSync)

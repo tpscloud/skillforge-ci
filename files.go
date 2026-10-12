@@ -173,6 +173,13 @@ func readConfig(root string) (configuration, error) {
 	if err := json.Unmarshal(b, &shape); err != nil {
 		return c, err
 	}
+	for key := range shape {
+		switch key {
+		case "version", "skills", "checks", "frontmatter":
+		default:
+			return c, fmt.Errorf("unknown configuration property: %s", key)
+		}
+	}
 	if raw, exists := shape["frontmatter"]; exists {
 		policy, ok := raw.(map[string]any)
 		if !ok {
@@ -211,6 +218,13 @@ func readConfig(root string) (configuration, error) {
 			object, ok := item.(map[string]any)
 			if !ok {
 				return c, fmt.Errorf("each check must be an object")
+			}
+			for key := range object {
+				switch key {
+				case "name", "command", "cwd":
+				default:
+					return c, fmt.Errorf("unknown check property: %s", key)
+				}
 			}
 			if cwd, exists := object["cwd"]; exists {
 				if _, ok := cwd.(string); !ok {

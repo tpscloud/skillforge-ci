@@ -193,3 +193,20 @@ func TestRebuiltConsumerRetainsOriginAndDetectsEdits(t *testing.T) {
 		t.Fatalf("modified consumer provenance: %+v", m)
 	}
 }
+
+func TestInstallPreservesUnmanagedEmptyDirectory(t *testing.T) {
+	root := fixture(t)
+	if err := installBundle(t.Context(), root, false); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, ".skill-quality", "licenses", "local-empty")
+	if err := os.Mkdir(path, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := installBundle(t.Context(), root, true); err == nil {
+		t.Fatal("accepted unmanaged directory")
+	}
+	if info, err := os.Stat(path); err != nil || !info.IsDir() {
+		t.Fatal("lost local directory")
+	}
+}
