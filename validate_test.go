@@ -101,6 +101,62 @@ func TestCleanContentAndCodeExamples(t *testing.T) {
 	}
 }
 
+func TestOptionalFrontmatterPolicy(t *testing.T) {
+	cases := []struct {
+		name, directory, policy, fields, code string
+	}{
+		{"default permits extensions and different directory", "other", "", "custom: value\n", ""},
+		{"allowed extension and matching directory", "sample", `,"frontmatter":{"allowedKeys":["name","description","license","argument-hint"],"requireDirectoryName":true}`, "license: MIT\nargument-hint: '[topic]'\n", ""},
+		{"unexpected key", "sample", `,"frontmatter":{"allowedKeys":["name","description"]}`, "license: MIT\n", "frontmatter"},
+		{"directory mismatch", "other", `,"frontmatter":{"requireDirectoryName":true}`, "", "skill-directory-name"},
+		{"directory check disabled", "other", `,"frontmatter":{"requireDirectoryName":false}`, "", ""},
+		{"empty policy", "other", `,"frontmatter":{}`, "custom: value\n", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := fixture(t)
+			path := "skills/" + tc.directory + "/SKILL.md"
+			writeFixture(t, root, path, "---\nname: sample\ndescription: Test a sample.\n"+tc.fields+"---\nBody.\n")
+			writeFixture(t, root, ".skill-quality.json", `{"version":1,"skills":["`+path+`"],"checks":[]`+tc.policy+`}`)
+			r := validateRepository(t.Context(), root)
+			if tc.code == "" {
+				if r.Status != "pass" {
+					t.Fatalf("unexpected failure: %+v", r.Findings)
+				}
+			} else if r.Status != "fail" || !hasFinding(r, tc.code) {
+				t.Fatalf("wanted %s; got %+v", tc.code, r.Findings)
+			}
+		})
+	}
+}
+
+func TestInvalidFrontmatterPolicy(t *testing.T) {
+	for _, policy := range []string{
+		`null`, `[]`, `true`,
+		`{"unknown":true}`, `{"requireDirectoryName":null}`, `{"requireDirectoryName":"yes"}`,
+		`{"allowedKeys":null}`, `{"allowedKeys":[]}`, `{"allowedKeys":"name"}`,
+		`{"allowedKeys":[null]}`, `{"allowedKeys":[""]}`, `{"allowedKeys":[" "]}`,
+		`{"allowedKeys":["name","name"]}`, `{"allowedKeys":[42]}`,
+		`{"requireDirectoryName":true,"requireDirectoryName":false}`,
+	} {
+		t.Run(policy, func(t *testing.T) {
+			root := fixture(t)
+			writeFixture(t, root, ".skill-quality.json", `{"skills":["SKILL.md"],"frontmatter":`+policy+`}`)
+			if r := validateRepository(t.Context(), root); r.Status != "fail" || !hasFinding(r, "configuration") {
+				t.Fatalf("invalid policy accepted: %+v", r)
+			}
+		})
+	}
+}
+
+func TestFrontmatterPolicyAtRepositoryRoot(t *testing.T) {
+	root := fixture(t)
+	writeFixture(t, root, ".skill-quality.json", `{"skills":["SKILL.md"],"frontmatter":{"requireDirectoryName":true}}`)
+	if r := validateRepository(t.Context(), root); !hasFinding(r, "skill-directory-name") {
+		t.Fatalf("root entrypoint skipped directory check: %+v", r)
+	}
+}
+
 func TestUnsafeSymlinksAndTrackedGeneratedFiles(t *testing.T) {
 	root := fixture(t)
 	if err := os.Symlink(t.TempDir(), filepath.Join(root, "escape")); err != nil {

@@ -145,9 +145,15 @@ type check struct {
 	CWD     string   `json:"cwd,omitempty"`
 }
 type configuration struct {
-	Version int      `json:"version"`
-	Skills  []string `json:"skills"`
-	Checks  []check  `json:"checks"`
+	Version     int               `json:"version"`
+	Skills      []string          `json:"skills"`
+	Checks      []check           `json:"checks"`
+	Frontmatter frontmatterPolicy `json:"frontmatter,omitzero"`
+}
+
+type frontmatterPolicy struct {
+	AllowedKeys          []string `json:"allowedKeys,omitempty"`
+	RequireDirectoryName bool     `json:"requireDirectoryName,omitzero"`
 }
 
 func readConfig(root string) (configuration, error) {
@@ -166,6 +172,35 @@ func readConfig(root string) (configuration, error) {
 	var shape map[string]any
 	if err := json.Unmarshal(b, &shape); err != nil {
 		return c, err
+	}
+	if raw, exists := shape["frontmatter"]; exists {
+		policy, ok := raw.(map[string]any)
+		if !ok {
+			return c, fmt.Errorf("frontmatter must be an object")
+		}
+		for key, value := range policy {
+			switch key {
+			case "allowedKeys":
+				keys, ok := value.([]any)
+				if !ok || len(keys) == 0 {
+					return c, fmt.Errorf("frontmatter.allowedKeys must be a nonempty array of strings")
+				}
+				seen := map[string]bool{}
+				for _, item := range keys {
+					key, ok := item.(string)
+					if !ok || strings.TrimSpace(key) == "" || seen[key] {
+						return c, fmt.Errorf("frontmatter.allowedKeys entries must be nonempty, unique strings")
+					}
+					seen[key] = true
+				}
+			case "requireDirectoryName":
+				if _, ok := value.(bool); !ok {
+					return c, fmt.Errorf("frontmatter.requireDirectoryName must be a boolean")
+				}
+			default:
+				return c, fmt.Errorf("unknown frontmatter policy: %s", key)
+			}
+		}
 	}
 	if rawChecks, exists := shape["checks"]; exists {
 		checks, ok := rawChecks.([]any)

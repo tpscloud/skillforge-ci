@@ -210,6 +210,23 @@ page properties fail validation. Ungrouped declared skills produce warnings.
 These checks implement the supported fields locally; no third-party schema is
 bundled or fetched at validation time.
 
+Repositories with stricter frontmatter rules can opt in through
+`.skill-quality.json`:
+
+```json
+"frontmatter": {
+  "allowedKeys": ["name", "description", "license", "argument-hint"],
+  "requireDirectoryName": true
+}
+```
+
+`allowedKeys` rejects other top-level YAML fields. If supplied, it must be a
+nonempty array of unique, nonempty strings. `requireDirectoryName` requires
+each skill's name to match its immediate parent directory, including entrypoints
+at the repository root. Both checks are optional; omitting `frontmatter`
+preserves the existing behavior. Invalid policy fields fail configuration
+validation. The required name and description checks always apply.
+
 ## Verification and licensing
 
 `go test -race ./...` covers malformed input, path escapes, symlinks, command

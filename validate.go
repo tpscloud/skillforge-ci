@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -61,7 +62,7 @@ func (r *report) issue(code, path, message string, warning bool) {
 
 var namePattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 
-func frontmatter(raw []byte) (string, []byte, error) {
+func frontmatter(raw []byte, policy frontmatterPolicy) (string, []byte, error) {
 	if !utf8.Valid(raw) {
 		return "", nil, fmt.Errorf("entrypoint is not UTF-8")
 	}
@@ -85,6 +86,17 @@ func frontmatter(raw []byte) (string, []byte, error) {
 	description, ok := meta["description"].(string)
 	if !ok || strings.TrimSpace(description) == "" || utf8.RuneCountInString(description) > 1024 {
 		return "", nil, fmt.Errorf("description must be a nonempty string of at most 1024 characters")
+	}
+	if len(policy.AllowedKeys) > 0 {
+		var extra []string
+		for _, key := range slices.Sorted(maps.Keys(meta)) {
+			if !slices.Contains(policy.AllowedKeys, key) {
+				extra = append(extra, key)
+			}
+		}
+		if len(extra) > 0 {
+			return "", nil, fmt.Errorf("unexpected frontmatter keys: %s", strings.Join(extra, ", "))
+		}
 	}
 	return name, bytes.Join(lines[end+1:], []byte("\n")), nil
 }
@@ -113,12 +125,15 @@ func validateRepository(ctx context.Context, path string) report {
 				r.issue("frontmatter", relative, err.Error(), false)
 				continue
 			}
-			name, body, err := frontmatter(raw)
+			name, body, err := frontmatter(raw, c.Frontmatter)
 			if err != nil {
 				r.issue("frontmatter", relative, err.Error(), false)
 				continue
 			}
 			r.Skills = append(r.Skills, skill{name, relative, hashBytes(raw)})
+			if dir := filepath.Base(filepath.Dir(path)); c.Frontmatter.RequireDirectoryName && name != dir {
+				r.issue("skill-directory-name", relative, fmt.Sprintf("name %q does not match directory %q", name, dir), false)
+			}
 			doc := goldmark.DefaultParser().Parse(text.NewReader(body))
 			_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
 				link, ok := n.(*ast.Link)
