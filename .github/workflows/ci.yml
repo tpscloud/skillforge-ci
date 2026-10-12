@@ -1,0 +1,91 @@
+# Copyright 2026 John Deatherage (@coversheets). SPDX-License-Identifier: MIT
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@90ad2b35f69faf97585ad74d28fa006d2739b7af
+        with:
+          go-version-file: go.mod
+      - name: Check Go formatting
+        run: test -z "$(gofmt -l ./*.go)"
+      - name: Check workflow syntax
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 .github/workflows/*.yml templates/*.yml
+      - name: Check Bash syntax
+        run: for script in scripts/*.sh; do bash -n "$script"; done
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-15, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@90ad2b35f69faf97585ad74d28fa006d2739b7af
+        with:
+          go-version-file: go.mod
+      - run: go mod verify
+      - run: go vet ./...
+      - run: go test -race -coverprofile="$RUNNER_TEMP/coverage.out" ./...
+      - name: Build executable
+        run: go build -mod=readonly -trimpath -o "$RUNNER_TEMP/skillforge" .
+      - name: Check scanner fixtures and failure paths
+        run: bash scripts/test-scanner.sh "$RUNNER_TEMP/skillforge"
+      - name: Build and test native release archive
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          version=0.0.0-dev
+          if [[ "$REF_TYPE" == tag ]]; then version="${REF_NAME#v}"; fi
+          bash scripts/package.sh "$version" "$RUNNER_TEMP/packages"
+          bash scripts/test-package.sh "$RUNNER_TEMP/packages/skillforge_${version}_$(go env GOOS)_$(go env GOARCH).tar.gz" "$version"
+      - name: Save packages
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: packages-${{ matrix.os }}
+          path: ${{ runner.temp }}/packages/*
+          if-no-files-found: error
+          retention-days: 7
+      - name: Save coverage
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-${{ matrix.os }}
+          path: ${{ runner.temp }}/coverage.out
+          if-no-files-found: error
+          retention-days: 7
+  required:
+    name: CI required
+    if: ${{ always() }}
+    needs: [lint, test]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Require every job to succeed
+        env:
+          LINT: ${{ needs.lint.result }}
+          TEST: ${{ needs.test.result }}
+        run: test "$LINT" = success && test "$TEST" = success

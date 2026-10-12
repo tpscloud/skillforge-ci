@@ -1,0 +1,4 @@
+/skillforge
+/dist/
+*.test
+.DS_Store
