@@ -20,6 +20,9 @@ import (
 
 const gitleaksVersion = "8.30.1"
 
+// Extend the pinned scanner's built-in rules, never the target's configuration.
+const scannerPolicy = "[extend]\nuseDefault = true\n"
+
 var archiveHashes = map[string]string{
 	"darwin/arm64": "b40ab0ae55c505963e365f271a8d3846efbc170aa17f2607f13df610a9aeb6a5",
 	"darwin/amd64": "dfe101a4db2255fc85120ac7f3d25e4342c3c20cf749f2c20a18081af1952709",
@@ -98,6 +101,7 @@ type scanMode struct {
 type scanReport struct {
 	Version   int        `json:"version"`
 	Scanner   string     `json:"scanner"`
+	Policy    string     `json:"policy"`
 	CheckedAt string     `json:"checkedAt"`
 	Revision  string     `json:"revision"`
 	Status    string     `json:"status"`
@@ -106,12 +110,33 @@ type scanReport struct {
 type executor func(context.Context, string, []string, io.Writer, io.Writer) error
 
 func scannerResults(ctx context.Context, root, output, binary string, run executor, out, diagnostic io.Writer) ([]scanMode, error) {
+	// Gitleaks also loads this file from the source even with an explicit
+	// --gitleaks-ignore-path. Refuse it without changing the target checkout.
+	if _, err := os.Lstat(filepath.Join(root, ".gitleaksignore")); err == nil {
+		return nil, fmt.Errorf("baseline scan refuses target .gitleaksignore; review exclusions and scan a separate copy without that file")
+	} else if !os.IsNotExist(err) {
+		return nil, err
+	}
+	policyDir, err := os.MkdirTemp("", "skillforge-scan-policy-")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(policyDir)
+	configPath := filepath.Join(policyDir, "gitleaks.toml")
+	if err := os.WriteFile(configPath, []byte(scannerPolicy), 0600); err != nil {
+		return nil, err
+	}
+	ignorePath := filepath.Join(policyDir, ".gitleaksignore")
+	if err := os.WriteFile(ignorePath, nil, 0600); err != nil {
+		return nil, err
+	}
 	var modes []scanMode
 	var failures []error
 	found := false
 	for _, mode := range []string{"git", "dir"} {
 		path := filepath.Join(output, "gitleaks-"+mode+".json")
-		args := []string{binary, mode, root, "--redact=100", "--no-banner", "--exit-code", "10", "--report-format", "json", "--report-path", path}
+		args := []string{binary, mode, root, "--redact=100", "--no-banner", "--exit-code", "10", "--report-format", "json", "--report-path", path,
+			"--config", configPath, "--gitleaks-ignore-path", ignorePath, "--ignore-gitleaks-allow"}
 		if mode == "git" {
 			args = append(args, "--log-opts=--all")
 		}
@@ -176,7 +201,7 @@ func scanRepository(ctx context.Context, path, output string, out, diagnostic io
 	if err := os.Mkdir(output, 0700); err != nil {
 		return fmt.Errorf("select a new evidence directory: %w", err)
 	}
-	report := scanReport{Version: 1, Scanner: "gitleaks " + gitleaksVersion, CheckedAt: time.Now().UTC().Format(time.RFC3339), Status: "error", Modes: []scanMode{}}
+	report := scanReport{Version: 1, Scanner: "gitleaks " + gitleaksVersion, Policy: "pinned-defaults-no-target-suppressions", CheckedAt: time.Now().UTC().Format(time.RFC3339), Status: "error", Modes: []scanMode{}}
 	if revision, err := git(ctx, root, "rev-parse", "HEAD"); err == nil {
 		report.Revision = string(bytes.TrimSpace(revision))
 	}

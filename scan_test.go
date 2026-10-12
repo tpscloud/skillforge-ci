@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"testing"
 )
@@ -78,6 +79,26 @@ func TestScannerModesAndEvidence(t *testing.T) {
 			output := t.TempDir()
 			calls := 0
 			run := func(ctx context.Context, cwd string, args []string, out, diagnostic io.Writer) error {
+				for _, flag := range []string{"--config", "--gitleaks-ignore-path"} {
+					index := slices.Index(args, flag)
+					if index < 0 || index+1 >= len(args) {
+						t.Fatalf("missing scanner policy flag %s", flag)
+					}
+					path := args[index+1]
+					if contained(cwd, path) {
+						t.Fatalf("scanner policy inside target: %s", path)
+					}
+					content, err := os.ReadFile(path)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if flag == "--config" && string(content) != scannerPolicy || flag == "--gitleaks-ignore-path" && len(content) != 0 {
+						t.Fatalf("unexpected policy content for %s", flag)
+					}
+				}
+				if !slices.Contains(args, "--ignore-gitleaks-allow") {
+					t.Fatal("inline suppressions enabled")
+				}
 				i := calls
 				calls++
 				if tc.reports[i] != "" {
@@ -112,5 +133,37 @@ func TestScannerOutputBoundary(t *testing.T) {
 	}
 	if err := scanRepository(t.Context(), root, filepath.Join(link, "reports"), io.Discard, io.Discard); err == nil {
 		t.Fatal("accepted symlink escape")
+	}
+}
+
+func TestScannerRefusesTargetIgnore(t *testing.T) {
+	for _, kind := range []string{"file", "symlink", "directory"} {
+		t.Run(kind, func(t *testing.T) {
+			root := t.TempDir()
+			path := filepath.Join(root, ".gitleaksignore")
+			var err error
+			switch kind {
+			case "file":
+				err = os.WriteFile(path, []byte("fixture fingerprint\n"), 0600)
+			case "symlink":
+				err = os.Symlink(filepath.Join(root, "absent"), path)
+			case "directory":
+				err = os.Mkdir(path, 0700)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			run := func(context.Context, string, []string, io.Writer, io.Writer) error {
+				t.Fatal("scanner ran with target ignore file")
+				return nil
+			}
+			_, err = scannerResults(t.Context(), root, t.TempDir(), "fixture", run, io.Discard, io.Discard)
+			if exitCode(err) != 2 {
+				t.Fatalf("expected operational refusal, got %v", err)
+			}
+			if _, err := os.Lstat(path); err != nil {
+				t.Fatalf("target was changed: %v", err)
+			}
+		})
 	}
 }

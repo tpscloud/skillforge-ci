@@ -41,7 +41,7 @@ pinned SHA-256 digest, then runs both the all-refs history scan and the current
 directory scan. It supports arm64 and amd64 on Linux and macOS. Reports are
 redacted and stay in a newly created directory outside the scanned repository.
 Missing reports, scanner errors, and results that disagree with the scanner's
-exit code are failures. The summary records each mode separately. CI uploads
+exit code are failures. The summary records each mode separately and names the scan policy. The baseline uses the pinned scanner's built-in rules and ignores target `.gitleaks.toml`, inline `gitleaks:allow` comments, and environment configuration overrides. Gitleaks also loads a target `.gitleaksignore` even with an explicit ignore path, so Skillforge refuses targets containing that file. Review it and scan a separate copy without it; the original checkout is left intact. Review false positives in the evidence; target-controlled suppressions cannot turn this baseline green. CI uploads
 only the summary; detailed findings remain local to the runner.
 
 Exit status is `0` for success, `1` for validation or secret findings, and `2`
@@ -237,7 +237,7 @@ post to a local HTTP server. They cover a fork that is behind, current,
 diverged, or missing, a push refused for a missing workflow permission, and
 failed notification delivery. No test contacts GitHub, and the command has not
 been run with a token against a GitHub fork. `scripts/test-scanner.sh` exercises the actual downloaded
-scanner against a clean repository and a synthetic finding. CI runs on Linux
+scanner against a clean repository, a synthetic finding, deleted history, and repository, environment, fingerprint, and inline suppression attempts. CI runs on Linux
 and macOS, then scans this repository.
 
 Original code, documentation, and workflow templates use [MIT](LICENSE).
