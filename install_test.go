@@ -2,6 +2,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
@@ -10,6 +11,87 @@ import (
 	"strings"
 	"testing"
 )
+
+func TestProviderWorkflowProfile(t *testing.T) {
+	root := fixture(t)
+	cmd := newRoot(&bytes.Buffer{}, &bytes.Buffer{})
+	cmd.SetArgs([]string{"install", root, "--workflow-profile", "providers"})
+	if err := cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	readProfile := func() string {
+		t.Helper()
+		b, err := os.ReadFile(filepath.Join(root, ".skill-quality/bundle.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var m manifest
+		if err := json.Unmarshal(b, &m); err != nil {
+			t.Fatal(err)
+		}
+		return m.WorkflowProfile
+	}
+	if err := installBundle(t.Context(), root, true); err != nil {
+		t.Fatal(err)
+	}
+	if got := readProfile(); got != "providers" {
+		t.Fatalf("update changed profile to %q", got)
+	}
+	workflow, err := os.ReadFile(filepath.Join(root, ".github/workflows/skill-quality.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(workflow, []byte("check-skills-sh.sh")) || !bytes.Contains(workflow, []byte("tessl review run quality")) || bytes.Contains(workflow, []byte("skillforge\" scan")) || bytes.Contains(workflow, []byte("plugin publish")) {
+		t.Fatal("provider workflow does not match selected services")
+	}
+	if err := installBundleWithProfile(t.Context(), root, true, "standard"); err != nil {
+		t.Fatal(err)
+	}
+	if got := readProfile(); got != "standard" {
+		t.Fatalf("explicit switch left profile %q", got)
+	}
+}
+
+func TestUnknownWorkflowProfileDoesNotWrite(t *testing.T) {
+	root := fixture(t)
+	cmd := newRoot(&bytes.Buffer{}, &bytes.Buffer{})
+	cmd.SetArgs([]string{"install", root, "--workflow-profile", "typo"})
+	if err := cmd.ExecuteContext(t.Context()); err == nil {
+		t.Fatal("accepted unknown profile")
+	}
+	if _, err := os.Stat(filepath.Join(root, ".skill-quality")); !os.IsNotExist(err) {
+		t.Fatal("invalid input changed repository")
+	}
+}
+
+func TestSkillsProviderChecksInstalledContent(t *testing.T) {
+	for _, mode := range []string{"complete", "missing", "changed"} {
+		t.Run(mode, func(t *testing.T) {
+			root := fixture(t)
+			writeFixture(t, root, ".skill-quality.json", `{"skills":["skills/example/SKILL.md"]}`)
+			writeFixture(t, root, "skills/example/SKILL.md", "fixture skill\n")
+			bin := t.TempDir()
+			writeFixture(t, bin, "npx", `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${*: -1}" == --list ]]; then exit 0; fi
+if [[ "$SKILL_TEST_MODE" == missing ]]; then exit 0; fi
+mkdir -p .agents/skills/example
+cp "$SKILL_TEST_SOURCE/skills/example/SKILL.md" .agents/skills/example/SKILL.md
+if [[ "$SKILL_TEST_MODE" == changed ]]; then echo changed > .agents/skills/example/SKILL.md; fi
+`)
+			if err := os.Chmod(filepath.Join(bin, "npx"), 0755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+			t.Setenv("SKILL_TEST_MODE", mode)
+			t.Setenv("SKILL_TEST_SOURCE", root)
+			out, err := exec.CommandContext(t.Context(), "bash", "templates/check-skills-sh.sh", root).CombinedOutput()
+			if (err == nil) != (mode == "complete") {
+				t.Fatalf("%s: error=%v output=%s", mode, err, out)
+			}
+		})
+	}
+}
 
 func TestInstallAndUpdate(t *testing.T) {
 	root := fixture(t)

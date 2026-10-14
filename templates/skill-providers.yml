@@ -1,0 +1,75 @@
+# Copyright 2026 John Deatherage (@coversheets). SPDX-License-Identifier: MIT
+name: Skill providers
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: skill-providers-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  skills-sh:
+    name: skills.sh installation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      DISABLE_TELEMETRY: "1"
+      DO_NOT_TRACK: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+      - name: Discover and install every declared skill in a temporary project
+        run: bash .skill-quality/templates/check-skills-sh.sh "$GITHUB_WORKSPACE"
+      - name: Explain hosted audit coverage
+        run: echo 'Skills CLI installation passed. Hosted skills.sh security audits are separate and are not asserted by this job.' >> "$GITHUB_STEP_SUMMARY"
+
+  tessl:
+    name: Tessl manifest and quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      HAS_TESSL_TOKEN: ${{ secrets.TESSL_TOKEN != '' }}
+      TESSL_WORKSPACE: ${{ vars.TESSL_WORKSPACE }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: tesslio/setup-tessl@25ec223fc0da33b41b8044ff5ab2b85235f4f91e # v2
+        with:
+          version: "0.114.0"
+      - name: Validate the plugin manifest
+        run: tessl plugin lint .
+      - name: Review skill quality on the default branch
+        if: github.event_name != 'pull_request' && github.ref_name == github.event.repository.default_branch && env.HAS_TESSL_TOKEN == 'true'
+        env:
+          TESSL_TOKEN: ${{ secrets.TESSL_TOKEN }}
+        run: |
+          set -euo pipefail
+          : "${TESSL_WORKSPACE:?Set the TESSL_WORKSPACE repository variable}"
+          mkdir -p "$RUNNER_TEMP/tessl-reviews"
+          jq -e '.skills | type == "array" and length > 0' .tessl-plugin/plugin.json >/dev/null
+          jq -r '.skills[]' .tessl-plugin/plugin.json > "$RUNNER_TEMP/tessl-skill-paths"
+          while IFS= read -r skill; do
+            tessl review run quality "$skill" --workspace "$TESSL_WORKSPACE" --threshold 80 --json > "$RUNNER_TEMP/tessl-reviews/$(basename "$skill").json"
+          done < "$RUNNER_TEMP/tessl-skill-paths"
+      - name: Explain reviews that did not run
+        if: env.HAS_TESSL_TOKEN != 'true' || github.event_name == 'pull_request' || github.ref_name != github.event.repository.default_branch
+        run: echo 'Tessl manifest lint ran. Hosted quality review did not run; it requires TESSL_TOKEN and TESSL_WORKSPACE on the default branch. This is not a quality-review pass.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Save hosted review evidence
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: tessl-reviews-${{ github.sha }}
+          path: ${{ runner.temp }}/tessl-reviews/
+          if-no-files-found: ignore
+          retention-days: 30

@@ -25,13 +25,14 @@ type manifestFile struct {
 	SHA256 string `json:"sha256"`
 }
 type manifest struct {
-	Version     int            `json:"version"`
-	Source      string         `json:"source"`
-	Revision    string         `json:"revision"`
-	Dirty       bool           `json:"sourceDirty"`
-	License     string         `json:"license"`
-	ContentHash string         `json:"contentHash"`
-	Files       []manifestFile `json:"files"`
+	Version         int            `json:"version"`
+	Source          string         `json:"source"`
+	Revision        string         `json:"revision"`
+	Dirty           bool           `json:"sourceDirty"`
+	License         string         `json:"license"`
+	ContentHash     string         `json:"contentHash"`
+	Files           []manifestFile `json:"files"`
+	WorkflowProfile string         `json:"workflowProfile,omitempty"`
 }
 
 func bundleFiles() []string {
@@ -239,12 +240,34 @@ func replaceFiles(changes []replacement, recovery string, rename func(string, st
 }
 
 func installBundle(ctx context.Context, path string, update bool) error {
+	return installBundleWithProfile(ctx, path, update, "")
+}
+
+func installBundleWithProfile(ctx context.Context, path string, update bool, profile string) error {
+	if profile != "" && profile != "standard" && profile != "providers" {
+		return fmt.Errorf("unknown workflow profile %q: choose standard or providers", profile)
+	}
 	root, err := repositoryRoot(ctx, path)
 	if err != nil {
 		return err
 	}
 	if err := checkExisting(root, update); err != nil {
 		return err
+	}
+	if profile == "" {
+		profile = "standard"
+		if b, err := os.ReadFile(filepath.Join(root, ".skill-quality/bundle.json")); err == nil {
+			var old manifest
+			if err := uniqueJSON(b, &old); err != nil {
+				return err
+			}
+			if old.WorkflowProfile != "" {
+				profile = old.WorkflowProfile
+			}
+		}
+	}
+	if profile != "standard" && profile != "providers" {
+		return fmt.Errorf("unsupported installed workflow profile %q", profile)
 	}
 	var configBytes []byte
 	if _, err := os.Stat(filepath.Join(root, ".skill-quality.json")); os.IsNotExist(err) {
@@ -281,7 +304,7 @@ func installBundle(ctx context.Context, path string, update bool) error {
 	}
 	stagingFailed := func(err error) error { return errors.Join(err, os.RemoveAll(recovery)) }
 	source := producerSource()
-	m := manifest{Version: 2, Source: "tpscloud/skillforge-ci", Revision: source.Revision, Dirty: source.Dirty, License: "MIT", ContentHash: bundleHash(), Files: []manifestFile{}}
+	m := manifest{Version: 2, Source: "tpscloud/skillforge-ci", Revision: source.Revision, Dirty: source.Dirty, License: "MIT", ContentHash: bundleHash(), Files: []manifestFile{}, WorkflowProfile: profile}
 	for _, name := range bundleFiles() {
 		b, err := bundle.ReadFile(name)
 		if err != nil {
@@ -303,7 +326,11 @@ func installBundle(ctx context.Context, path string, update bool) error {
 		}
 		m.Files = append(m.Files, manifestFile{name, hashBytes(b)})
 	}
-	workflow, err := bundle.ReadFile("templates/skill-quality.yml")
+	workflowName := "templates/skill-quality.yml"
+	if profile == "providers" {
+		workflowName = "templates/skill-providers.yml"
+	}
+	workflow, err := bundle.ReadFile(workflowName)
 	if err != nil {
 		return stagingFailed(err)
 	}

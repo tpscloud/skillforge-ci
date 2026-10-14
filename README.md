@@ -98,6 +98,8 @@ compatibility, or approval from an external security service.
 skillforge install /path/to/skill-repo
 # After reviewing an existing managed bundle:
 skillforge install /path/to/skill-repo --update
+# For repositories that use only skills.sh and Tessl in CI:
+skillforge install /path/to/skill-repo --workflow-profile providers
 ```
 
 The installer copies its embedded sources, pinned module files, license texts,
@@ -107,6 +109,21 @@ without fetching this repository. The manifest records the producer
 revision and dirty state, content hash, and individual file digests. Copies
 retain the producer provenance when built and installed elsewhere. Edits to
 the copied sources mark that provenance dirty on the next installation.
+
+The default `standard` workflow builds Skillforge and runs validation, configured
+checks, and the secret scanner. The `providers` workflow tests installation with
+the pinned Skills CLI in a temporary project and runs `tessl plugin lint`. It
+also runs hosted Tessl quality reviews on the default branch when the
+`TESSL_TOKEN` secret and `TESSL_WORKSPACE` variable are configured, failing scores
+below 80. Pull requests never receive the review token. Missing credentials or
+a non-default branch are reported as reviews not run, not passing reviews.
+Neither profile publishes anything.
+
+The provider workflow does not claim hosted skills.sh security coverage. Those
+audits are separate from CLI installation and may be unavailable for private
+repositories. Local Skillforge commands remain available with either profile.
+Updates preserve the installed profile unless `--workflow-profile` explicitly
+selects another one.
 
 Existing `.skill-quality.json` files are preserved. When that file is absent,
 the installer inventories tracked and unignored `SKILL.md` files and creates
@@ -123,7 +140,7 @@ fails, the recovery directory is retained and its path appears in the error.
 Repository-specific tests keep their existing commands and dependencies. Before
 migrating a consumer, add any required test-language setup to a separate
 repository workflow or provide it through the declared checks. The supplied
-workflow installs only Go; it does not provision Python or Node for consumer
+standard workflow installs only Go; it does not provision Python or Node for consumer
 tests.
 
 ## Sync forks

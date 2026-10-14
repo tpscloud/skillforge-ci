@@ -31,7 +31,7 @@ jobs:
       - name: Check workflow syntax
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 .github/workflows/*.yml templates/*.yml
       - name: Check Bash syntax
-        run: for script in scripts/*.sh; do bash -n "$script"; done
+        run: for script in scripts/*.sh templates/*.sh; do bash -n "$script"; done
   test:
     strategy:
       fail-fast: false

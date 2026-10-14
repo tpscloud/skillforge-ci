@@ -83,14 +83,16 @@ func newRoot(out, diagnostic io.Writer) *cobra.Command {
 		panic(err)
 	}
 	var update bool
+	var workflowProfile string
 	install := &cobra.Command{Use: "install repository", Short: "Copy the embedded Go CI bundle into a selected repository", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
-		if err := installBundle(cmd.Context(), args[0], update); err != nil {
+		if err := installBundleWithProfile(cmd.Context(), args[0], update, workflowProfile); err != nil {
 			return err
 		}
 		fmt.Fprintln(cmd.OutOrStdout(), "Installed Skillforge CI bundle; inspect the diff before committing.")
 		return nil
 	}}
 	install.Flags().BoolVar(&update, "update", false, "Replace recognized managed files; preserve repository configuration")
+	install.Flags().StringVar(&workflowProfile, "workflow-profile", "", "CI profile: standard or providers (preserves the installed profile on update)")
 	var forks forkSyncOptions
 	forkSync := &cobra.Command{Use: "fork-sync [directory]", Short: "Fast-forward declared forks to their upstream branch and report the result", Long: "Reads .skill-forks.json from the directory, fast-forwards each declared fork to its upstream branch, and reports every fork that is behind, diverged, missing, or not writable.\n\nThe fork token is read from SKILLFORGE_FORK_TOKEN and an optional webhook URL from SKILLFORGE_NOTIFY_WEBHOOK. A Markdown summary is appended to the file named by GITHUB_STEP_SUMMARY when that variable is set.", Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		if forks.Timeout <= 0 {
