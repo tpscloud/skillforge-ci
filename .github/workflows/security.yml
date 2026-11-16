@@ -27,7 +27,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-go@90ad2b35f69faf97585ad74d28fa006d2739b7af
+      - uses: actions/setup-go@8b677753fd4b4d6609c9c9625407df2960c5e109
         with:
           go-version-file: go.mod
       - name: Check reachable Go vulnerabilities
